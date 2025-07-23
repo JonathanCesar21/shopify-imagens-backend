@@ -32,6 +32,7 @@ app.get("/api/produtos", async (req, res) => {
         id: produto.id,
         title: produto.title,
         tags: produto.tags,
+        handle: produto.handle,
         images: produto.images || [],
         created_at: produto.created_at,
       }));
