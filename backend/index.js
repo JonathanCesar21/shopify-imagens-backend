@@ -7,7 +7,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔐 Variáveis de ambiente
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN;
 const ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const API_VERSION = process.env.SHOPIFY_API_VERSION;
@@ -32,14 +31,17 @@ app.get("/api/produtos", async (req, res) => {
         id: produto.id,
         title: produto.title,
         tags: produto.tags,
-        handle: produto.handle,
+        handle: produto.handle,            // ✅ adicionado handle
         images: produto.images || [],
         created_at: produto.created_at,
       }));
 
     res.json(produtos);
   } catch (error) {
-    console.error("❌ Erro ao buscar produtos:", error.response?.data || error.message);
+    console.error(
+      "❌ Erro ao buscar produtos:",
+      error.response?.data || error.message
+    );
     res.status(500).json({ erro: "Erro ao buscar produtos." });
   }
 });
@@ -64,10 +66,12 @@ app.post("/api/upload/:productId", async (req, res) => {
         },
       }
     );
-
     res.json(response.data);
   } catch (error) {
-    console.error("❌ Erro ao enviar imagem:", error.response?.data || error.message);
+    console.error(
+      "❌ Erro ao enviar imagem:",
+      error.response?.data || error.message
+    );
     res.status(500).json({ erro: "Erro ao enviar imagem." });
   }
 });
@@ -95,18 +99,13 @@ app.put("/api/imagem/:productId/:imageId", async (req, res) => {
         },
       }
     );
-
     console.log("✅ Imagem reordenada:", response.data);
     res.json(response.data);
   } catch (error) {
-    console.error("❌ ERRO ao reordenar imagem:");
+    console.error("❌ ERRO ao reordenar imagem:", error.response?.data || error.message);
     if (error.response) {
-      console.error("Status:", error.response.status);
-      console.error("Headers:", error.response.headers);
-      console.error("Data:", error.response.data);
       res.status(error.response.status).json(error.response.data);
     } else {
-      console.error("Erro desconhecido:", error.message);
       res.status(500).json({ erro: "Erro desconhecido ao reordenar imagem." });
     }
   }
