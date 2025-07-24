@@ -12,11 +12,11 @@ const ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const API_VERSION = process.env.SHOPIFY_API_VERSION;
 const PORT = process.env.PORT || 4000;
 
-// 🔄 ROTA: Listar produtos com imagens
+// 🔄 ROTA: Listar produtos com handle, tags, imagens e data
 app.get("/api/produtos", async (req, res) => {
   try {
     const response = await axios.get(
-      `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products.json`,
+      `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products.json?fields=id,title,handle,tags,images,created_at`,
       {
         headers: {
           "X-Shopify-Access-Token": ACCESS_TOKEN,
@@ -30,8 +30,8 @@ app.get("/api/produtos", async (req, res) => {
       .map((produto) => ({
         id: produto.id,
         title: produto.title,
+        handle: produto.handle,       // agora garantido
         tags: produto.tags,
-        handle: produto.handle,            // ✅ adicionado handle
         images: produto.images || [],
         created_at: produto.created_at,
       }));
@@ -54,11 +54,7 @@ app.post("/api/upload/:productId", async (req, res) => {
   try {
     const response = await axios.post(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images.json`,
-      {
-        image: {
-          attachment: imageBase64,
-        },
-      },
+      { image: { attachment: imageBase64 } },
       {
         headers: {
           "X-Shopify-Access-Token": ACCESS_TOKEN,
@@ -81,17 +77,10 @@ app.put("/api/imagem/:productId/:imageId", async (req, res) => {
   const { imageId, productId } = req.params;
   const { position } = req.body;
 
-  console.log("➡️ Reordenando imagem ID:", imageId, "para posição:", position);
-
   try {
     const response = await axios.put(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images/${imageId}.json`,
-      {
-        image: {
-          id: parseInt(imageId),
-          position: Math.max(1, parseInt(position)),
-        },
-      },
+      { image: { id: parseInt(imageId), position: Math.max(1, parseInt(position)) } },
       {
         headers: {
           "X-Shopify-Access-Token": ACCESS_TOKEN,
@@ -99,15 +88,13 @@ app.put("/api/imagem/:productId/:imageId", async (req, res) => {
         },
       }
     );
-    console.log("✅ Imagem reordenada:", response.data);
     res.json(response.data);
   } catch (error) {
-    console.error("❌ ERRO ao reordenar imagem:", error.response?.data || error.message);
-    if (error.response) {
-      res.status(error.response.status).json(error.response.data);
-    } else {
-      res.status(500).json({ erro: "Erro desconhecido ao reordenar imagem." });
-    }
+    console.error(
+      "❌ Erro ao reordenar imagem:",
+      error.response?.data || error.message
+    );
+    res.status(error.response?.status || 500).json({ erro: "Erro ao reordenar imagem." });
   }
 });
 
