@@ -10,7 +10,7 @@ require("dotenv").config();
 const app = express();
 app.use(cors());
 app.use(express.json());
-
+//teste
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN;
 const ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const API_VERSION = process.env.SHOPIFY_API_VERSION;
