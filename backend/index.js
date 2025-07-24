@@ -12,7 +12,7 @@ const ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const API_VERSION = process.env.SHOPIFY_API_VERSION;
 const PORT = process.env.PORT || 4000;
 
-// 🔄 ROTA: Listar produtos com handle, tags, imagens e data
+// 🔄 ROTA: Listar produtos com handle
 app.get("/api/produtos", async (req, res) => {
   try {
     const response = await axios.get(
@@ -30,7 +30,7 @@ app.get("/api/produtos", async (req, res) => {
       .map((produto) => ({
         id: produto.id,
         title: produto.title,
-        handle: produto.handle,       // agora garantido
+        handle: produto.handle,    // agora virá do Shopify
         tags: produto.tags,
         images: produto.images || [],
         created_at: produto.created_at,
@@ -38,10 +38,7 @@ app.get("/api/produtos", async (req, res) => {
 
     res.json(produtos);
   } catch (error) {
-    console.error(
-      "❌ Erro ao buscar produtos:",
-      error.response?.data || error.message
-    );
+    console.error("❌ Erro ao buscar produtos:", error.response?.data || error.message);
     res.status(500).json({ erro: "Erro ao buscar produtos." });
   }
 });
