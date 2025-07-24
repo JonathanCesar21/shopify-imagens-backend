@@ -44,7 +44,8 @@ app.get("/api/produtos", async (req, res) => {
   }
 });
 
-// 🚀 ROTA: Remover BG e gerar novo background via OpenAI Images Edit
+// 🚀 ROTA: Remover BG e gerar novo background via OpenAI Images Edit (HTTP FormData)
+const FormData = require("form-data");
 app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
   try {
@@ -66,61 +67,35 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
     const tmpPath = path.join(os.tmpdir(), `shopify-${imageId}.png`);
     fs.writeFileSync(tmpPath, imgBuffer);
 
-    // 3) Chamar OpenAI Images Edit
+    // 3) Preparar FormData para o endpoint de edição de imagem
     const prompt =
       "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce.";
-    const editRes = await openai.images.edit({
-      image: fs.createReadStream(tmpPath),
-      mask: fs.createReadStream(tmpPath),
-      prompt,
-      n: 1,
-      size: "1024x1024"
-    });
+    const form = new FormData();
+    form.append("image", fs.createReadStream(tmpPath), { filename: "image.png", contentType: "image/png" });
+    form.append("mask", fs.createReadStream(tmpPath), { filename: "mask.png", contentType: "image/png" });
+    form.append("prompt", prompt);
+    form.append("n", 1);
+    form.append("size", "1024x1024");
 
-    // 4) Obter URL gerada
-    const newImageUrl = editRes.data[0].url;
+    // 4) Enviar ao endpoint via axios
+    const openaiRes = await axios.post(
+      "https://api.openai.com/v1/images/edits",
+      form,
+      {
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          ...form.getHeaders(),
+        },
+      }
+    );
+    const newImageUrl = openaiRes.data.data[0].url;
 
-    // Limpar arquivo temporário
+    // 5) Limpar arquivo temporário e retornar
     fs.unlinkSync(tmpPath);
-
     return res.json({ newImageUrl });
   } catch (err) {
-    console.error("❌ Erro ao gerar novo background:", err);
+    console.error("❌ Erro ao gerar novo background:", err.response?.data || err);
     return res.status(500).json({ erro: err.response?.data?.error?.message || err.message });
-  }
-});
-
-// 📤 ROTA: Enviar imagem base64 para Shopify
-app.post("/api/upload/:productId", async (req, res) => {
-  const { productId } = req.params;
-  const { imageBase64 } = req.body;
-  try {
-    const response = await axios.post(
-      `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images.json`,
-      { image: { attachment: imageBase64 } },
-      { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
-    );
-    return res.json(response.data);
-  } catch (err) {
-    console.error("❌ Erro ao enviar imagem:", err.response?.data || err);
-    return res.status(500).json({ erro: "Erro ao enviar imagem." });
-  }
-});
-
-// 🔃 ROTA: Reordenar imagens do produto
-app.put("/api/imagem/:productId/:imageId", async (req, res) => {
-  const { productId, imageId } = req.params;
-  const { position } = req.body;
-  try {
-    const response = await axios.put(
-      `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images/${imageId}.json`,
-      { image: { id: parseInt(imageId, 10), position: Math.max(1, parseInt(position, 10)) } },
-      { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
-    );
-    return res.json(response.data);
-  } catch (err) {
-    console.error("❌ Erro ao reordenar imagem:", err.response?.data || err);
-    return res.status(err.response?.status || 500).json({ erro: "Erro ao reordenar imagem." });
   }
 });
 
