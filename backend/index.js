@@ -89,13 +89,6 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
   }
 });
 
-    res.json({ newImageUrl });
-  } catch (err) {
-    console.error("❌ Erro ao gerar novo background:", err);
-    res.status(500).json({ erro: err.response?.data?.error?.message || err.message });
-  }
-});
-
 // 📤 ROTA: Upload de imagem base64
 app.post("/api/upload/:productId", async (req, res) => {
   const { productId } = req.params;
