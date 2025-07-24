@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 4000;
 // Inicializa cliente OpenAI v4
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// 🔄 ROTA: Listar produtos
+// 🔄 ROTA: Listar produtos com campos essenciais
 app.get("/api/produtos", async (req, res) => {
   try {
     const response = await axios.get(
@@ -37,17 +37,16 @@ app.get("/api/produtos", async (req, res) => {
         images: p.images || [],
         created_at: p.created_at
       }));
-    res.json(produtos);
+    return res.json(produtos);
   } catch (err) {
     console.error("❌ Erro ao buscar produtos:", err.response?.data || err);
-    res.status(500).json({ erro: "Erro ao buscar produtos." });
+    return res.status(500).json({ erro: "Erro ao buscar produtos." });
   }
 });
 
 // 🚀 ROTA: Remover BG e gerar novo background via OpenAI Images Edit
 app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
-
   try {
     // 1) Buscar imagem no Shopify
     const prodRes = await axios.get(
@@ -56,16 +55,18 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
     );
     const images = prodRes.data.product.images || [];
     const imgObj = images.find(i => i.id === parseInt(imageId, 10));
-    if (!imgObj) return res.status(404).json({ erro: "Imagem não encontrada." });
+    if (!imgObj) {
+      return res.status(404).json({ erro: "Imagem não encontrada." });
+    }
 
-    // 2) Baixar e salvar temporariamente
+    // 2) Baixar e salvar temporariamente como PNG
     const imgBuffer = await axios
       .get(imgObj.src, { responseType: "arraybuffer" })
       .then(r => Buffer.from(r.data, "binary"));
     const tmpPath = path.join(os.tmpdir(), `shopify-${imageId}.png`);
     fs.writeFileSync(tmpPath, imgBuffer);
 
-    // 3) Editar imagem via OpenAI (Image Edits endpoint)
+    // 3) Chamar OpenAI Images Edit
     const prompt =
       "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce.";
     const editRes = await openai.images.edit({
@@ -76,56 +77,52 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
       size: "1024x1024"
     });
 
-    // 4) Retornar nova URL
+    // 4) Obter URL gerada
     const newImageUrl = editRes.data[0].url;
 
-    // opcional: remover arquivo temporário
+    // Limpar arquivo temporário
     fs.unlinkSync(tmpPath);
 
-    res.json({ newImageUrl });
+    return res.json({ newImageUrl });
   } catch (err) {
     console.error("❌ Erro ao gerar novo background:", err);
-    res.status(500).json({ erro: err.response?.data?.error?.message || err.message });
+    return res.status(500).json({ erro: err.response?.data?.error?.message || err.message });
   }
 });
 
-    res.json({ newImageUrl });
-
-// 📤 ROTA: Upload de imagem base64
+// 📤 ROTA: Enviar imagem base64 para Shopify
 app.post("/api/upload/:productId", async (req, res) => {
   const { productId } = req.params;
   const { imageBase64 } = req.body;
-
   try {
     const response = await axios.post(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images.json`,
       { image: { attachment: imageBase64 } },
       { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
-    res.json(response.data);
+    return res.json(response.data);
   } catch (err) {
     console.error("❌ Erro ao enviar imagem:", err.response?.data || err);
-    res.status(500).json({ erro: "Erro ao enviar imagem." });
+    return res.status(500).json({ erro: "Erro ao enviar imagem." });
   }
 });
 
-// 🔃 ROTA: Reordenar imagens
+// 🔃 ROTA: Reordenar imagens do produto
 app.put("/api/imagem/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
   const { position } = req.body;
-
   try {
     const response = await axios.put(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images/${imageId}.json`,
       { image: { id: parseInt(imageId, 10), position: Math.max(1, parseInt(position, 10)) } },
       { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
-    res.json(response.data);
+    return res.json(response.data);
   } catch (err) {
     console.error("❌ Erro ao reordenar imagem:", err.response?.data || err);
-    res.status(err.response?.status || 500).json({ erro: "Erro ao reordenar imagem." });
+    return res.status(err.response?.status || 500).json({ erro: "Erro ao reordenar imagem." });
   }
 });
 
 // Inicia servidor
-app.listen(PORT, () => console.log(`🚀 Backend em http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Backend rodando em http://localhost:${PORT}`));
