@@ -1,6 +1,9 @@
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const { Configuration, OpenAIApi } = require("openai");
 require("dotenv").config();
 
@@ -18,19 +21,13 @@ const PORT = process.env.PORT || 4000;
 const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
 const openai = new OpenAIApi(configuration);
 
-// 🔄 ROTA: Listar produtos com handle
+// 🔄 ROTA: Listar produtos
 app.get("/api/produtos", async (req, res) => {
   try {
     const response = await axios.get(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products.json?fields=id,title,handle,tags,images,created_at`,
-      {
-        headers: {
-          "X-Shopify-Access-Token": ACCESS_TOKEN,
-          "Content-Type": "application/json",
-        },
-      }
+      { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
-
     const produtos = response.data.products
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
       .map((p) => ({
@@ -41,100 +38,93 @@ app.get("/api/produtos", async (req, res) => {
         images: p.images || [],
         created_at: p.created_at,
       }));
-
     res.json(produtos);
-  } catch (error) {
-    console.error("❌ Erro ao buscar produtos:", error.response?.data || error.message);
+  } catch (err) {
+    console.error("❌ Erro ao buscar produtos:", err.response?.data || err);
     res.status(500).json({ erro: "Erro ao buscar produtos." });
   }
 });
 
-// 🚀 ROTA: Remover BG e gerar novo background via OpenAI
+// 🚀 ROTA: Remover BG e gerar novo background
 app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
 
   try {
-    // 1) Buscar imagem original no Shopify
+    // 1) Busca as imagens do produto
     const prodRes = await axios.get(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}.json?fields=images`,
       { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
     const images = prodRes.data.product.images || [];
     const imgObj = images.find((i) => i.id === parseInt(imageId, 10));
-    if (!imgObj) return res.status(404).json({ erro: "Imagem não encontrada." });
+    if (!imgObj) {
+      return res.status(404).json({ erro: "Imagem não encontrada." });
+    }
 
+    // 2) Baixa a imagem e salva em arquivo temporário
     const imageUrl = imgObj.src;
+    const imgBuffer = await axios
+      .get(imageUrl, { responseType: "arraybuffer" })
+      .then((r) => Buffer.from(r.data, "binary"));
 
-    // 2) Baixar a imagem para buffer
-    const imgResponse = await axios.get(imageUrl, { responseType: "arraybuffer" });
-    const imageBuffer = Buffer.from(imgResponse.data, "binary");
+    const tmpPath = path.join(os.tmpdir(), `shopify-${imageId}.png`);
+    fs.writeFileSync(tmpPath, imgBuffer);
 
-    // 3) Chamada OpenAI Image Edit
+    // 3) Chama OpenAI Image Edit com arquivo + máscara iguais
     const prompt =
       "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce.";
-    const editRes = await openai.createImageEdit(
-      imageBuffer,    // imagem original
-      imageBuffer,    // máscara (usar a própria imagem para selecionar tudo)
+    const editRes = await openai.createImageEdit({
+      image: fs.createReadStream(tmpPath),
+      mask: fs.createReadStream(tmpPath),
       prompt,
-      1,
-      "1024x1024"
-    );
+      n: 1,
+      size: "1024x1024",
+    });
 
+    // 4) Retorna URL da nova imagem
     const newImageUrl = editRes.data.data[0].url;
     res.json({ newImageUrl });
-  } catch (error) {
-    console.error("❌ Erro ao gerar novo background:", error);
+  } catch (err) {
+    console.error("❌ Erro ao gerar novo background:", err);
     res.status(500).json({ erro: "Erro ao gerar novo background." });
   }
 });
 
-// 📤 ROTA: Enviar imagem base64 para produto
+// 📤 ROTA: Upload de imagem Base64
 app.post("/api/upload/:productId", async (req, res) => {
   const { productId } = req.params;
   const { imageBase64 } = req.body;
-
   try {
     const response = await axios.post(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images.json`,
       { image: { attachment: imageBase64 } },
-      {
-        headers: {
-          "X-Shopify-Access-Token": ACCESS_TOKEN,
-          "Content-Type": "application/json",
-        },
-      }
+      { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
     res.json(response.data);
-  } catch (error) {
-    console.error("❌ Erro ao enviar imagem:", error.response?.data || error.message);
+  } catch (err) {
+    console.error("❌ Erro ao enviar imagem:", err.response?.data || err);
     res.status(500).json({ erro: "Erro ao enviar imagem." });
   }
 });
 
-// 🔃 ROTA: Reordenar imagens do produto
+// 🔃 ROTA: Reordenar imagens
 app.put("/api/imagem/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
   const { position } = req.body;
-
   try {
     const response = await axios.put(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images/${imageId}.json`,
       { image: { id: parseInt(imageId, 10), position: Math.max(1, parseInt(position, 10)) } },
-      {
-        headers: {
-          "X-Shopify-Access-Token": ACCESS_TOKEN,
-          "Content-Type": "application/json",
-        },
-      }
+      { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
     res.json(response.data);
-  } catch (error) {
-    console.error("❌ Erro ao reordenar imagem:", error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({ erro: "Erro ao reordenar imagem." });
+  } catch (err) {
+    console.error("❌ Erro ao reordenar imagem:", err.response?.data || err);
+    res.status(err.response?.status || 500).json({ erro: "Erro ao reordenar imagem." });
   }
 });
 
-// 🚀 Iniciar servidor
+// Inicia o servidor
 app.listen(PORT, () => {
   console.log(`🚀 Backend rodando em http://localhost:${PORT}`);
 });
