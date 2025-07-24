@@ -61,13 +61,10 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
       .get(imgObj.src, { responseType: "arraybuffer" })
       .then(r => Buffer.from(r.data, "binary"));
 
-    // 3) Converter para PNG com canal alpha e redimensionar
-    const { width, height } = await sharp(imgBuffer).metadata();
-    const pngBuffer = await sharp(imgBuffer)
-      .ensureAlpha()
-      .resize({ width: Math.min(width, 2048) })
-      .png({ quality: 90 })
-      .toBuffer();
+        // 3) Converter para PNG com canal alpha e redimensionar (<4MB)
+    const resized = sharp(imgBuffer).ensureAlpha().resize({ width: Math.min((await sharp(imgBuffer).metadata()).width, 2048) });
+    const pngBuffer = await resized.png({ quality: 90 }).toBuffer();
+    const { width, height } = await resized.metadata();
     fs.writeFileSync(tmpImagePath, pngBuffer);
 
     // 4) Gerar máscara branca em L (grayscale)
