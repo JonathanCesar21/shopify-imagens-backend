@@ -45,6 +45,8 @@ app.get("/api/produtos", async (req, res) => {
 // 🚀 ROTA: Remover BG e gerar novo background via OpenAI Images Edit
 app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
+  const tmpImagePath = path.join(os.tmpdir(), `shopify-${imageId}.png`);
+  const tmpMaskPath = path.join(os.tmpdir(), `mask-${imageId}.png`);
   try {
     // 1) Buscar imagem no Shopify
     const prodRes = await axios.get(
@@ -52,52 +54,72 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
       { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
     const imgObj = prodRes.data.product.images.find(i => i.id === parseInt(imageId, 10));
-    if (!imgObj) {
-      return res.status(404).json({ erro: "Imagem não encontrada." });
-    }
+    if (!imgObj) return res.status(404).json({ erro: "Imagem não encontrada." });
 
     // 2) Baixar buffer da imagem original
     const imgBuffer = await axios
       .get(imgObj.src, { responseType: "arraybuffer" })
       .then(r => Buffer.from(r.data, "binary"));
 
-    // 3) Converter para PNG com alpha e redimensionar (<4MB)
+    // 3) Converter para PNG com canal alpha e redimensionar
+    const { width, height } = await sharp(imgBuffer).metadata();
     const pngBuffer = await sharp(imgBuffer)
       .ensureAlpha()
-      .resize({ width: 2048 })
+      .resize({ width: Math.min(width, 2048) })
       .png({ quality: 90 })
       .toBuffer();
+    fs.writeFileSync(tmpImagePath, pngBuffer);
 
-    // 4) Salvar temporariamente
-    const tmpPath = path.join(os.tmpdir(), `shopify-${imageId}.png`);
-    fs.writeFileSync(tmpPath, pngBuffer);
+    // 4) Gerar máscara branca em L (grayscale)
+    const maskBuffer = await sharp({
+      create: { width, height, channels: 1, background: { r: 255, g: 255, b: 255 } }
+    })
+      .png()
+      .toBuffer();
+    fs.writeFileSync(tmpMaskPath, maskBuffer);
 
     // 5) Preparar FormData
     const prompt =
       "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce.";
     const form = new FormData();
-    form.append("image", fs.createReadStream(tmpPath), { filename: "image.png", contentType: "image/png" });
-    form.append("mask", fs.createReadStream(tmpPath), { filename: "mask.png", contentType: "image/png" });
+    form.append("image", fs.createReadStream(tmpImagePath), { filename: "image.png", contentType: "image/png" });
+    form.append("mask", fs.createReadStream(tmpMaskPath), { filename: "mask.png", contentType: "image/png" });
     form.append("prompt", prompt);
     form.append("n", 1);
     form.append("size", "1024x1024");
 
-    // 6) Chamada ao endpoint de edits
-    const openaiRes = await axios.post(
-      "https://api.openai.com/v1/images/edits",
-      form,
-      { headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, ...form.getHeaders() } }
-    );
+    // 6) Chamada ao endpoint de edits com retry
+    const requestConfig = {
+      method: 'post',
+      url: 'https://api.openai.com/v1/images/edits',
+      data: form,
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, ...form.getHeaders() }
+    };
+    let openaiRes;
+    for (let i = 0; i < 3; i++) {
+      try {
+        openaiRes = await axios(requestConfig);
+        break;
+      } catch (err) {
+        const status = err.response?.status;
+        if (status >= 500 && i < 2) {
+          await new Promise(r => setTimeout(r, (i+1)*1000));
+          continue;
+        }
+        console.error("❌ Erro permanente ao gerar novo background:", err.response?.data || err);
+        return res.status(500).json({ erro: "Falha ao gerar novo background." });
+      }
+    }
+    if (!openaiRes) return res.status(500).json({ erro: "Falha após tentativas." });
     const newImageUrl = openaiRes.data.data[0].url;
 
-    // 7) Limpar temporário e responder
-    fs.unlinkSync(tmpPath);
+    // 7) Limpar temporários
+    fs.unlinkSync(tmpImagePath);
+    fs.unlinkSync(tmpMaskPath);
     return res.json({ newImageUrl });
   } catch (err) {
-    console.error("❌ Erro ao gerar novo background:", err.response?.data || err);
-    return res
-      .status(500)
-      .json({ erro: err.response?.data?.error?.message || err.message });
+    console.error("❌ Erro geral ao gerar novo background:", err.response?.data || err);
+    return res.status(500).json({ erro: err.message });
   }
 });
 
@@ -131,9 +153,7 @@ app.put("/api/imagem/:productId/:imageId", async (req, res) => {
     return res.json(response.data);
   } catch (err) {
     console.error("❌ Erro ao reordenar imagem:", err.response?.data || err);
-    return res
-      .status(err.response?.status || 500)
-      .json({ erro: "Erro ao reordenar imagem." });
+    return res.status(err.response?.status || 500).json({ erro: "Erro ao reordenar imagem." });
   }
 });
 
