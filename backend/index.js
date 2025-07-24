@@ -18,9 +18,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const PORT = process.env.PORT || 4000;
 
 // Inicializa o cliente OpenAI (v4)
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // 🔄 ROTA: Listar produtos
 app.get("/api/produtos", async (req, res) => {
@@ -49,15 +47,18 @@ app.get("/api/produtos", async (req, res) => {
 // 🚀 ROTA: Remover BG e gerar novo background via OpenAI
 app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
+
   try {
-    // 1) Busca imagem no Shopify
+    // 1) Busca imagens do produto
     const prodRes = await axios.get(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}.json?fields=images`,
       { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
     const images = prodRes.data.product.images || [];
     const imgObj = images.find((i) => i.id === parseInt(imageId, 10));
-    if (!imgObj) return res.status(404).json({ erro: "Imagem não encontrada." });
+    if (!imgObj) {
+      return res.status(404).json({ erro: "Imagem não encontrada." });
+    }
 
     // 2) Baixa e salva em arquivo temporário
     const imgBuffer = await axios
@@ -66,10 +67,10 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
     const tmpPath = path.join(os.tmpdir(), `shopify-${imageId}.png`);
     fs.writeFileSync(tmpPath, imgBuffer);
 
-    // 3) Chama OpenAI para editar imagem
+    // 3) Chama OpenAI.images.edit
     const prompt =
       "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce.";
-    const editRes = await openai.images.createEdit({
+    const editRes = await openai.images.edit({
       image: fs.createReadStream(tmpPath),
       mask: fs.createReadStream(tmpPath),
       prompt,
@@ -77,12 +78,13 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
       size: "1024x1024",
     });
 
-    // 4) Retorna a URL gerada
+    // 4) Retorna URL da nova imagem
     const newImageUrl = editRes.data[0].url;
     res.json({ newImageUrl });
   } catch (err) {
     console.error("❌ Erro ao gerar novo background:", err);
-    res.status(500).json({ erro: "Erro ao gerar novo background." });
+    // Retorna mensagem de erro para o frontend
+    res.status(500).json({ erro: err.message });
   }
 });
 
@@ -90,6 +92,7 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
 app.post("/api/upload/:productId", async (req, res) => {
   const { productId } = req.params;
   const { imageBase64 } = req.body;
+
   try {
     const response = await axios.post(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images.json`,
@@ -107,6 +110,7 @@ app.post("/api/upload/:productId", async (req, res) => {
 app.put("/api/imagem/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
   const { position } = req.body;
+
   try {
     const response = await axios.put(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images/${imageId}.json`,
