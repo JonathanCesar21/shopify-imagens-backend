@@ -4,7 +4,7 @@ const cors = require("cors");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const OpenAI = require("openai");
+const FormData = require("form-data");
 require("dotenv").config();
 
 const app = express();
@@ -16,9 +16,6 @@ const ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const API_VERSION = process.env.SHOPIFY_API_VERSION;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const PORT = process.env.PORT || 4000;
-
-// Inicializa o cliente OpenAI (v4)
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // 🔄 ROTA: Listar produtos
 app.get("/api/produtos", async (req, res) => {
@@ -49,7 +46,7 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
 
   try {
-    // 1) Busca imagens do produto
+    // 1) Busca imagem no Shopify
     const prodRes = await axios.get(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}.json?fields=images`,
       { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
@@ -60,31 +57,47 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
       return res.status(404).json({ erro: "Imagem não encontrada." });
     }
 
-    // 2) Baixa e salva em arquivo temporário
+    // 2) Baixa e salva temporariamente
     const imgBuffer = await axios
       .get(imgObj.src, { responseType: "arraybuffer" })
       .then((r) => Buffer.from(r.data, "binary"));
     const tmpPath = path.join(os.tmpdir(), `shopify-${imageId}.png`);
     fs.writeFileSync(tmpPath, imgBuffer);
 
-    // 3) Chama OpenAI.images.edit
-    const prompt =
-      "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce.";
-    const editRes = await openai.images.edit({
-      image: fs.createReadStream(tmpPath),
-      mask: fs.createReadStream(tmpPath),
-      prompt,
-      n: 1,
-      size: "1024x1024",
+    // 3) Prepara multipart/form-data
+    const form = new FormData();
+    form.append("image", fs.createReadStream(tmpPath), {
+      filename: "image.png",
+      contentType: "image/png",
     });
+    form.append("mask", fs.createReadStream(tmpPath), {
+      filename: "mask.png",
+      contentType: "image/png",
+    });
+    form.append(
+      "prompt",
+      "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce."
+    );
+    form.append("n", 1);
+    form.append("size", "1024x1024");
 
-    // 4) Retorna URL da nova imagem
-    const newImageUrl = editRes.data[0].url;
+    // 4) Requisição direta ao endpoint de edits
+    const editRes = await axios.post(
+      "https://api.openai.com/v1/images/edits",
+      form,
+      {
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          ...form.getHeaders(),
+        },
+      }
+    );
+
+    const newImageUrl = editRes.data.data[0].url;
     res.json({ newImageUrl });
   } catch (err) {
     console.error("❌ Erro ao gerar novo background:", err);
-    // Retorna mensagem de erro para o frontend
-    res.status(500).json({ erro: err.message });
+    res.status(500).json({ erro: err.response?.data?.error?.message || err.message });
   }
 });
 
@@ -92,7 +105,6 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
 app.post("/api/upload/:productId", async (req, res) => {
   const { productId } = req.params;
   const { imageBase64 } = req.body;
-
   try {
     const response = await axios.post(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images.json`,
@@ -106,11 +118,10 @@ app.post("/api/upload/:productId", async (req, res) => {
   }
 });
 
-// 🔃 ROTA: Reordenar imagens do produto
+// 🔃 ROTA: Reordenar imagens
 app.put("/api/imagem/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
   const { position } = req.body;
-
   try {
     const response = await axios.put(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images/${imageId}.json`,
