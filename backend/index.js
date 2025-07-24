@@ -1,10 +1,10 @@
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
+const sharp = require("sharp");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const sharp = require("sharp");               // << adiciona sharp
 const FormData = require("form-data");
 require("dotenv").config();
 
@@ -27,13 +27,13 @@ app.get("/api/produtos", async (req, res) => {
     );
     const produtos = response.data.products
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-      .map((p) => ({
+      .map(p => ({
         id: p.id,
         title: p.title,
         handle: p.handle,
         tags: p.tags,
         images: p.images || [],
-        created_at: p.created_at,
+        created_at: p.created_at
       }));
     return res.json(produtos);
   } catch (err) {
@@ -51,57 +51,46 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}.json?fields=images`,
       { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
-    const images = prodRes.data.product.images || [];
-    const imgObj = images.find((i) => i.id === parseInt(imageId, 10));
+    const imgObj = prodRes.data.product.images.find(i => i.id === parseInt(imageId, 10));
     if (!imgObj) {
       return res.status(404).json({ erro: "Imagem não encontrada." });
     }
 
-    // 2) Baixar imagem original
+    // 2) Baixar buffer da imagem original
     const imgBuffer = await axios
       .get(imgObj.src, { responseType: "arraybuffer" })
-      .then((r) => Buffer.from(r.data, "binary"));
+      .then(r => Buffer.from(r.data, "binary"));
 
-    // 3) Converter para PNG (e opcionalmente redimensionar para caber em <4MB)
+    // 3) Converter para PNG com alpha e redimensionar (<4MB)
     const pngBuffer = await sharp(imgBuffer)
+      .ensureAlpha()
+      .resize({ width: 2048 })
       .png({ quality: 90 })
-      .resize({ width: 2048 })    // limite de largura para tamanho <4MB
       .toBuffer();
 
     // 4) Salvar temporariamente
     const tmpPath = path.join(os.tmpdir(), `shopify-${imageId}.png`);
     fs.writeFileSync(tmpPath, pngBuffer);
 
-    // 5) Preparar FormData para o endpoint de edição de imagem
+    // 5) Preparar FormData
     const prompt =
       "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce.";
     const form = new FormData();
-    form.append("image", fs.createReadStream(tmpPath), {
-      filename: "image.png",
-      contentType: "image/png",
-    });
-    form.append("mask", fs.createReadStream(tmpPath), {
-      filename: "mask.png",
-      contentType: "image/png",
-    });
+    form.append("image", fs.createReadStream(tmpPath), { filename: "image.png", contentType: "image/png" });
+    form.append("mask", fs.createReadStream(tmpPath), { filename: "mask.png", contentType: "image/png" });
     form.append("prompt", prompt);
     form.append("n", 1);
     form.append("size", "1024x1024");
 
-    // 6) Enviar ao endpoint via axios
+    // 6) Chamada ao endpoint de edits
     const openaiRes = await axios.post(
       "https://api.openai.com/v1/images/edits",
       form,
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          ...form.getHeaders(),
-        },
-      }
+      { headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, ...form.getHeaders() } }
     );
     const newImageUrl = openaiRes.data.data[0].url;
 
-    // 7) Limpar arquivo temporário e retornar
+    // 7) Limpar temporário e responder
     fs.unlinkSync(tmpPath);
     return res.json({ newImageUrl });
   } catch (err) {
@@ -136,9 +125,7 @@ app.put("/api/imagem/:productId/:imageId", async (req, res) => {
   try {
     const response = await axios.put(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images/${imageId}.json`,
-      {
-        image: { id: parseInt(imageId, 10), position: Math.max(1, parseInt(position, 10)) },
-      },
+      { image: { id: parseInt(imageId, 10), position: Math.max(1, parseInt(position, 10)) } },
       { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
     return res.json(response.data);
