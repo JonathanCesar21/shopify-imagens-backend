@@ -4,7 +4,7 @@ const cors = require("cors");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const FormData = require("form-data");
+const OpenAI = require("openai");
 require("dotenv").config();
 
 const app = express();
@@ -17,6 +17,9 @@ const API_VERSION = process.env.SHOPIFY_API_VERSION;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const PORT = process.env.PORT || 4000;
 
+// Inicializa cliente OpenAI v4
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
 // 🔄 ROTA: Listar produtos
 app.get("/api/produtos", async (req, res) => {
   try {
@@ -26,13 +29,13 @@ app.get("/api/produtos", async (req, res) => {
     );
     const produtos = response.data.products
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-      .map((p) => ({
+      .map(p => ({
         id: p.id,
         title: p.title,
         handle: p.handle,
         tags: p.tags,
         images: p.images || [],
-        created_at: p.created_at,
+        created_at: p.created_at
       }));
     res.json(produtos);
   } catch (err) {
@@ -41,59 +44,44 @@ app.get("/api/produtos", async (req, res) => {
   }
 });
 
-// 🚀 ROTA: Remover BG e gerar novo background via OpenAI
+// 🚀 ROTA: Remover BG e gerar novo background via OpenAI Images Edit
 app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
 
   try {
-    // 1) Busca imagem no Shopify
+    // 1) Buscar imagem no Shopify
     const prodRes = await axios.get(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}.json?fields=images`,
       { headers: { "X-Shopify-Access-Token": ACCESS_TOKEN } }
     );
     const images = prodRes.data.product.images || [];
-    const imgObj = images.find((i) => i.id === parseInt(imageId, 10));
-    if (!imgObj) {
-      return res.status(404).json({ erro: "Imagem não encontrada." });
-    }
+    const imgObj = images.find(i => i.id === parseInt(imageId, 10));
+    if (!imgObj) return res.status(404).json({ erro: "Imagem não encontrada." });
 
-    // 2) Baixa e salva temporariamente
+    // 2) Baixar e salvar temporariamente
     const imgBuffer = await axios
       .get(imgObj.src, { responseType: "arraybuffer" })
-      .then((r) => Buffer.from(r.data, "binary"));
+      .then(r => Buffer.from(r.data, "binary"));
     const tmpPath = path.join(os.tmpdir(), `shopify-${imageId}.png`);
     fs.writeFileSync(tmpPath, imgBuffer);
 
-    // 3) Prepara multipart/form-data
-    const form = new FormData();
-    form.append("image", fs.createReadStream(tmpPath), {
-      filename: "image.png",
-      contentType: "image/png",
+    // 3) Editar imagem via OpenAI
+    const prompt =
+      "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce.";
+    const editRes = await openai.images.createEdit({
+      image: fs.createReadStream(tmpPath),
+      mask: fs.createReadStream(tmpPath),
+      prompt,
+      n: 1,
+      size: "1024x1024"
     });
-    form.append("mask", fs.createReadStream(tmpPath), {
-      filename: "mask.png",
-      contentType: "image/png",
-    });
-    form.append(
-      "prompt",
-      "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce."
-    );
-    form.append("n", 1);
-    form.append("size", "1024x1024");
 
-    // 4) Requisição direta ao endpoint de edits
-    const editRes = await axios.post(
-      "https://api.openai.com/v1/images/edits",
-      form,
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          ...form.getHeaders(),
-        },
-      }
-    );
+    // 4) Retornar nova URL
+    const newImageUrl = editRes.data[0].url;
 
-    const newImageUrl = editRes.data.data[0].url;
+    // opcional: remover arquivo temporário
+    fs.unlinkSync(tmpPath);
+
     res.json({ newImageUrl });
   } catch (err) {
     console.error("❌ Erro ao gerar novo background:", err);
@@ -105,6 +93,7 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
 app.post("/api/upload/:productId", async (req, res) => {
   const { productId } = req.params;
   const { imageBase64 } = req.body;
+
   try {
     const response = await axios.post(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images.json`,
@@ -122,6 +111,7 @@ app.post("/api/upload/:productId", async (req, res) => {
 app.put("/api/imagem/:productId/:imageId", async (req, res) => {
   const { productId, imageId } = req.params;
   const { position } = req.body;
+
   try {
     const response = await axios.put(
       `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/products/${productId}/images/${imageId}.json`,
@@ -135,7 +125,5 @@ app.put("/api/imagem/:productId/:imageId", async (req, res) => {
   }
 });
 
-// Inicia o servidor
-app.listen(PORT, () => {
-  console.log(`🚀 Backend rodando em http://localhost:${PORT}`);
-});
+// Inicia servidor
+app.listen(PORT, () => console.log(`🚀 Backend em http://localhost:${PORT}`));
