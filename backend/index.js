@@ -65,10 +65,10 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
     const tmpPath = path.join(os.tmpdir(), `shopify-${imageId}.png`);
     fs.writeFileSync(tmpPath, imgBuffer);
 
-    // 3) Editar imagem via OpenAI
+    // 3) Editar imagem via OpenAI (Image Edits endpoint)
     const prompt =
       "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce.";
-    const editRes = await openai.images.createEdit({
+    const editRes = await openai.images.edits.create({
       image: fs.createReadStream(tmpPath),
       mask: fs.createReadStream(tmpPath),
       prompt,
@@ -81,6 +81,13 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
 
     // opcional: remover arquivo temporário
     fs.unlinkSync(tmpPath);
+
+    res.json({ newImageUrl });
+  } catch (err) {
+    console.error("❌ Erro ao gerar novo background:", err);
+    res.status(500).json({ erro: err.response?.data?.error?.message || err.message });
+  }
+});
 
     res.json({ newImageUrl });
   } catch (err) {
