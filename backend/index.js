@@ -68,7 +68,7 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
     // 3) Editar imagem via OpenAI (Image Edits endpoint)
     const prompt =
       "Remova o background do calçado e gere um fundo branco sólido na cor e8ecea, iluminação suave de estúdio, sem objetos, sem sombras, clean, estilo e-commerce.";
-    const editRes = await openai.images.edits.create({
+    const editRes = await openai.images.edit({
       image: fs.createReadStream(tmpPath),
       mask: fs.createReadStream(tmpPath),
       prompt,
@@ -88,6 +88,8 @@ app.post("/api/remove-bg/:productId/:imageId", async (req, res) => {
     res.status(500).json({ erro: err.response?.data?.error?.message || err.message });
   }
 });
+
+    res.json({ newImageUrl });
 
 // 📤 ROTA: Upload de imagem base64
 app.post("/api/upload/:productId", async (req, res) => {
